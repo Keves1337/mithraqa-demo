@@ -102,12 +102,20 @@ const CHECKS=[
  {id:"auth",name:"Authenticated scans",locked:1},
  {id:"repair",name:"Auto-repair",locked:1}];
 const FINDINGS=[
- {c:"headers",sev:"Medium",t:"Content-Security-Policy header is missing",where:"All pages",why:"Without a CSP, injected scripts run with no browser-side restriction.",fix:"Send a Content-Security-Policy header, starting with default-src 'self'."},
- {c:"headers",sev:"Low",t:"Server version shown in response headers",where:"All responses",why:"Version details help attackers pick known exploits.",fix:"Remove or generalize the Server and X-Powered-By headers."},
- {c:"xss",sev:"High",t:"Search term reflected without encoding",where:"/search?q=",why:"A crafted link could run script in a visitor's browser.",fix:"HTML-encode output and validate input on the server."},
- {c:"xss",sev:"Medium",t:"Comment field accepts HTML tags",where:"/reviews",why:"Stored markup could affect other users who view the page.",fix:"Strip or escape tags before saving and before display."},
- {c:"sqli",sev:"Critical",t:"Query built by joining user input into SQL",where:"/products?id=",why:"Attackers could read or change database records.",fix:"Use parameterized queries for every database call."},
- {c:"csrf",sev:"High",t:"Profile update form has no anti-forgery token",where:"POST /account/update",why:"Another site could trigger changes for a logged-in user.",fix:"Add per-session CSRF tokens and SameSite cookies."}];
+ {c:'headers',sev:'Medium',t:'Content-Security-Policy header is missing',where:'All pages',owasp:'A05 Security Misconfiguration',cvss:'5.3',why:'No CSP is sent, so injected scripts run unrestricted.',fix:"Send Content-Security-Policy, starting with default-src 'self'.",ev:'GET / → 200, no Content-Security-Policy header'},
+ {c:'headers',sev:'Medium',t:'Strict-Transport-Security header is missing',where:'All HTTPS pages',owasp:'A02 Cryptographic Failures',cvss:'5.0',why:'Browsers may be tricked into using plain HTTP.',fix:'Add Strict-Transport-Security: max-age=31536000; includeSubDomains.',ev:'GET / → 200, no Strict-Transport-Security header'},
+ {c:'headers',sev:'Low',t:'Server version shown in response headers',where:'All responses',owasp:'A05 Security Misconfiguration',cvss:'3.1',why:'Version details help attackers pick known exploits.',fix:'Remove or generalize the Server and X-Powered-By headers.',ev:'Server: nginx/1.18.0 (sample)'},
+ {c:'headers',sev:'Low',t:'Cookies missing Secure / HttpOnly flags',where:'session cookie',owasp:'A07 Identification and Authentication Failures',cvss:'3.7',why:'Script or plain-HTTP traffic could read the session cookie.',fix:'Set Secure, HttpOnly and SameSite=Lax on session cookies.',ev:'Set-Cookie: sid=sample123; Path=/'},
+ {c:'xss',sev:'High',t:'Search term reflected without encoding',where:'/search?q=',owasp:'A03 Injection',cvss:'7.4',why:"A crafted link could run script in a visitor's browser.",fix:'HTML-encode output and validate input on the server.',ev:'q=<svg onload=alert(1)> echoed unescaped in the page body'},
+ {c:'xss',sev:'High',t:'Profile name stored without sanitizing',where:'/account/profile',owasp:'A03 Injection',cvss:'7.1',why:'Stored script runs for every admin who opens the user list.',fix:'Escape on output and restrict allowed characters on input.',ev:'Name field value rendered as raw HTML in /admin/users'},
+ {c:'xss',sev:'Medium',t:'Comment field accepts HTML tags',where:'/reviews',owasp:'A03 Injection',cvss:'5.4',why:'Stored markup could affect other users who view the page.',fix:'Strip or escape tags before saving and before display.',ev:'<b>test</b> saved and displayed as bold text'},
+ {c:'xss',sev:'Low',t:'DOM-based redirect uses unvalidated URL parameter',where:'/login?next=',owasp:'A01 Broken Access Control',cvss:'3.5',why:'Visitors could be sent to a look-alike site after logging in.',fix:'Allow only same-site relative paths in the next parameter.',ev:'next=//evil.example accepted'},
+ {c:'sqli',sev:'Critical',t:'Query built by joining user input into SQL',where:'/products?id=',owasp:'A03 Injection',cvss:'9.1',why:'Attackers could read or change database records.',fix:'Use parameterized queries for every database call.',ev:"id=1' OR '1'='1 returned all 248 sample rows"},
+ {c:'sqli',sev:'High',t:'Login form returns database error text',where:'POST /login',owasp:'A03 Injection',cvss:'7.5',why:'Error messages reveal table and column names.',fix:'Return a generic error and log details server-side.',ev:'Sample error: syntax error near "\'" at position 41'},
+ {c:'sqli',sev:'Medium',t:'Sort parameter inserted into ORDER BY',where:'/orders?sort=',owasp:'A03 Injection',cvss:'5.9',why:'Attackers can probe the database through the sort field.',fix:'Map sort values to a fixed allow-list of columns.',ev:'sort=price;-- changed response ordering and timing'},
+ {c:'csrf',sev:'High',t:'Profile update form has no anti-forgery token',where:'POST /account/update',owasp:'A01 Broken Access Control',cvss:'7.1',why:'Another site could trigger changes for a logged-in user.',fix:'Add per-session CSRF tokens and SameSite cookies.',ev:'Request accepted with Origin: https://other.example'},
+ {c:'csrf',sev:'Medium',t:'Password change does not ask for the current password',where:'POST /account/password',owasp:'A07 Identification and Authentication Failures',cvss:'5.8',why:'A hijacked session can lock the real owner out.',fix:'Require the current password for sensitive changes.',ev:'Request succeeded with no current_password field'},
+ {c:'csrf',sev:'Low',t:'Logout works through a GET link',where:'GET /logout',owasp:'A01 Broken Access Control',cvss:'2.6',why:'A hidden image on another site can sign users out.',fix:'Make logout a POST request with a CSRF token.',ev:'<img src=/logout> ended the sample session'}];
 const $=id=>document.getElementById(id);
 let target=null,checks=new Set();
 function show(p){["p1","p2","p3","p4"].forEach(x=>$(x).classList.toggle("hide",x!==p));
@@ -135,8 +143,8 @@ function results(){const f=FINDINGS.filter(x=>checks.has(x.c));const n=s=>f.filt
  f.forEach(x=>{const wrap=document.createElement("div");const b=document.createElement("button");b.className="find";
   b.innerHTML='<span class="sev s-'+x.sev+'">'+x.sev+'</span><span class="t"></span><span>▾</span>';b.querySelector(".t").textContent=x.t;
   const d=document.createElement("div");d.className="detail hide";
-  d.innerHTML="<p><b>Where:</b> <code></code></p><p><b>Why it matters:</b> </p><p><b>Suggested fix:</b> </p><p><small>Sample text for demonstration only.</small></p>";
-  d.querySelector("code").textContent=x.where;d.children[1].append(x.why);d.children[2].append(x.fix);
+  d.innerHTML="<p><b>Where:</b> <code class=w></code></p><p><b>Category:</b> <span class=o></span> · <b>Score:</b> <span class=v></span> (sample)</p><p><b>Evidence:</b> <code class=e></code></p><p><b>Why it matters:</b> <span class=y></span></p><p><b>Suggested fix:</b> <span class=x></span></p><p><small>Status: Open · Sample text for demonstration only.</small></p>";
+  d.querySelector(".w").textContent=x.where;d.querySelector(".o").textContent=x.owasp;d.querySelector(".v").textContent=x.cvss;d.querySelector(".e").textContent=x.ev;d.querySelector(".y").textContent=x.why;d.querySelector(".x").textContent=x.fix;
   b.onclick=()=>{d.classList.toggle("hide");b.classList.toggle("sel")};wrap.append(b,d);box.append(wrap)});
  show("p4")}
 $("again").onclick=()=>{target=null;checks=new Set();$("n1").disabled=true;$("n2").disabled=true;drawTargets();drawChecks();show("p1")};
